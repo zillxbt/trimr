@@ -50,8 +50,9 @@ function cleanPid(): void {
   try { unlinkSync(getPidFile()); } catch { /* ignore */ }
 }
 
-/** Start the proxy as a background process */
-export function startService(): { success: boolean; message: string; pid?: number } {
+/** Start the proxy as a background process.
+ *  Pass extra env vars to configure mode (e.g. TRIMR_MODE, PORT). */
+export function startService(extraEnv?: Record<string, string>): { success: boolean; message: string; pid?: number } {
   if (isRunning()) {
     const pid = readPid()!;
     return { success: true, message: `Trimr already running (PID ${pid})`, pid };
@@ -76,8 +77,9 @@ export function startService(): { success: boolean; message: string; pid?: numbe
 
   const logFile = getLogFile();
 
-  // Log the launch command for debugging
-  appendFileSync(logFile, `\n[${new Date().toISOString()}] Starting Trimr: "${cmd}" ${args.map(a => `"${a}"`).join(' ')}\n`);
+  // Log the launch command and env for debugging
+  const envLog = extraEnv ? ' env=' + JSON.stringify(extraEnv) : '';
+  appendFileSync(logFile, `\n[${new Date().toISOString()}] Starting Trimr: "${cmd}" ${args.map(a => `"${a}"`).join(' ')}${envLog}\n`);
 
   const out = openSync(logFile, 'a');
   const err = openSync(logFile, 'a');
@@ -95,7 +97,7 @@ export function startService(): { success: boolean; message: string; pid?: numbe
     env: {
       ...process.env,
       TOKENDIFF_DASHBOARD: 'false',
-      TRIMR_MODE: 'intercept',
+      ...extraEnv,
     },
     cwd: PROJECT_ROOT,
     shell: isWin,
@@ -169,8 +171,12 @@ export function setupAutostart(): { success: boolean; message: string } {
         const tsxBin = join(PROJECT_ROOT, 'node_modules', '.bin', 'tsx.cmd');
         vbsCmd = `"""${tsxBin}"" ""${cliSrc}"" start"`;
       }
-      // WshShell.Run expects: command, windowStyle (0=hidden), waitOnReturn
+      // Set intercept env vars, then launch hidden
       const vbs = `Set WshShell = CreateObject("WScript.Shell")\n` +
+        `Set WshEnv = WshShell.Environment("Process")\n` +
+        `WshEnv("TRIMR_MODE") = "intercept"\n` +
+        `WshEnv("PORT") = "443"\n` +
+        `WshEnv("TOKENDIFF_DASHBOARD") = "false"\n` +
         `WshShell.Run ${vbsCmd}, 0, False\n`;
 
       writeFileSync(vbsPath, vbs);
@@ -197,6 +203,7 @@ export function setupAutostart(): { success: boolean; message: string } {
   <dict>
     <key>TOKENDIFF_DASHBOARD</key><string>false</string>
     <key>TRIMR_MODE</key><string>intercept</string>
+    <key>PORT</key><string>443</string>
   </dict>
 </dict>
 </plist>`;
@@ -218,6 +225,7 @@ ExecStart="${process.execPath}" "${join(PROJECT_ROOT, 'dist', 'proxy.js')}"
 Restart=on-failure
 Environment=TOKENDIFF_DASHBOARD=false
 Environment=TRIMR_MODE=intercept
+Environment=PORT=443
 
 [Install]
 WantedBy=default.target

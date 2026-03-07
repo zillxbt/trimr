@@ -121,9 +121,12 @@ export async function install(): Promise<boolean> {
     warn('Autostart setup failed — you can start Trimr manually with: trimr start');
   }
 
-  // Step 4 — Start proxy BEFORE modifying hosts
-  step('4. Starting proxy');
-  const startResult = startService();
+  // Step 4 — Start proxy in intercept mode BEFORE modifying hosts
+  step('4. Starting proxy (intercept mode)');
+  const startResult = startService({
+    TRIMR_MODE: 'intercept',
+    PORT: '443',
+  });
   if (!report(startResult)) {
     allOk = false;
     fail('Proxy failed to start — skipping hosts file modification for safety');
