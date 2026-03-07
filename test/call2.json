@@ -1,0 +1,8 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "max_tokens": 32,
+  "messages": [{
+    "role": "user",
+    "content": "Review this updated version:\n```src/auth.ts\nimport jwt from 'jsonwebtoken';\nimport { Request, Response, NextFunction } from 'express';\nimport { logger } from './logger';\n\nconst SECRET = process.env.JWT_SECRET || 'dev-secret';\nconst TOKEN_EXPIRY = process.env.TOKEN_EXPIRY || '7d';\n\nexport function signToken(userId: string, role: string): string {\n  return jwt.sign({ sub: userId, role }, SECRET, { expiresIn: TOKEN_EXPIRY });\n}\n\nexport function verifyToken(token: string): { sub: string; role: string } {\n  return jwt.verify(token, SECRET) as { sub: string; role: string };\n}\n\nexport function authMiddleware(req: Request, res: Response, next: NextFunction) {\n  const header = req.headers.authorization;\n  if (!header || !header.startsWith('Bearer ')) {\n    return res.status(401).json({ error: 'Missing token' });\n  }\n  try {\n    const payload = verifyToken(header.slice(7));\n    (req as any).userId = payload.sub;\n    (req as any).userRole = payload.role;\n    logger.info('Auth OK', { userId: payload.sub });\n    next();\n  } catch (err) {\n    logger.warn('Auth failed', { err });\n    res.status(401).json({ error: 'Invalid token' });\n  }\n}\n```"
+  }]
+}

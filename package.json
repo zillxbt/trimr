@@ -1,0 +1,34 @@
+{
+  "name": "tokendiff",
+  "version": "1.0.0",
+  "description": "Local proxy that reduces Anthropic API token usage via caching, diffing, and summarisation",
+  "type": "module",
+  "bin": {
+    "tokendiff": "./bin/tokendiff.mjs"
+  },
+  "scripts": {
+    "dev": "tsx src/proxy.ts",
+    "dev:nodash": "cross-env TOKENDIFF_DASHBOARD=false tsx src/proxy.ts",
+    "test": "node --import tsx --test test/dedup.test.ts test/differ.test.ts test/cache.test.ts test/session.test.ts test/savings.test.ts",
+    "build": "tsc",
+    "start": "NODE_ENV=production node dist/proxy.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "blessed": "^0.1.81",
+    "chalk": "^5.3.0",
+    "diff": "^7.0.0",
+    "fastify": "^4.28.0",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.25",
+    "@types/diff": "^5.2.1",
+    "@types/node": "^22.0.0",
+    "cross-env": "^10.1.0",
+    "typescript": "^5.6.0"
+  }
+}

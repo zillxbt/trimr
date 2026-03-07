@@ -1,0 +1,8 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "max_tokens": 32,
+  "messages": [{
+    "role": "user",
+    "content": "What does this file do?\n```src/auth.ts\nimport jwt from 'jsonwebtoken';\nimport { Request, Response, NextFunction } from 'express';\n\nconst SECRET = process.env.JWT_SECRET || 'dev-secret';\n\nexport function signToken(userId: string): string {\n  return jwt.sign({ sub: userId }, SECRET, { expiresIn: '7d' });\n}\n\nexport function verifyToken(token: string): { sub: string } {\n  return jwt.verify(token, SECRET) as { sub: string };\n}\n\nexport function authMiddleware(req: Request, res: Response, next: NextFunction) {\n  const header = req.headers.authorization;\n  if (!header || !header.startsWith('Bearer ')) {\n    return res.status(401).json({ error: 'Missing token' });\n  }\n  try {\n    const payload = verifyToken(header.slice(7));\n    (req as any).userId = payload.sub;\n    next();\n  } catch {\n    res.status(401).json({ error: 'Invalid token' });\n  }\n}\n```"
+  }]
+}

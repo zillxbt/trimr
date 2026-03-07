@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TokenDiff</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0a0a;
+      --surface:   #141414;
+      --surface2:  #1e1e1e;
+      --border:    #2a2a2a;
+      --green:     #30d158;
+      --green-dim: rgba(48,209,88,0.15);
+      --blue:      #3b9eff;
+      --yellow:    #ffd60a;
+      --red:       #ff453a;
+      --text:      #e8e8e8;
+      --muted:     #888;
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --mono: 'SF Mono', ui-monospace, 'Cascadia Code', monospace;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    body { display: flex; flex-direction: column; min-height: 100vh; }
+
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .logo-text { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; }
+    .logo-sub { font-size: 11px; color: var(--muted); margin-left: 4px; font-weight: 400; }
+
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .status-pill {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 99px;
+      font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+      background: var(--surface2); border: 1px solid var(--border);
+      transition: all 0.3s;
+    }
+    .status-pill.live { border-color: rgba(48,209,88,0.4); color: var(--green); }
+    .status-pill.live .pulse {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    .status-pill.error { border-color: rgba(255,69,58,0.4); color: var(--red); }
+    .status-pill .pulse.err { background: var(--red); animation: none; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .port-badge {
+      font-size: 11px; color: var(--muted);
+      font-family: var(--mono); background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 3px 8px;
+    }
+
+    main { flex: 1; padding: 24px; max-width: 1200px; width: 100%; margin: 0 auto; }
+
+    /* ── Summary cards ──────────────────────────────────────────────────── */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, transparent 60%, var(--accent, transparent) 100%);
+      opacity: 0.06; pointer-events: none;
+    }
+    .card-label { font-size: 10px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .card-value { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; color: var(--text); line-height: 1; }
+    .card-value.green { color: var(--green); }
+    .card-value.blue  { color: var(--blue); }
+    .card-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* ── Section heading ────────────────────────────────────────────────── */
+    .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .section-title { font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
+
+    /* ── Sessions table ─────────────────────────────────────────────────── */
+    .table-wrap {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      overflow: hidden; margin-bottom: 24px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    thead th {
+      text-align: left; padding: 10px 14px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.7px; text-transform: uppercase;
+      color: var(--muted); background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background 0.15s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface2); }
+    tbody td { padding: 11px 14px; }
+
+    .session-id { font-family: var(--mono); font-size: 11px; color: var(--text); }
+    .ratio-bar-wrap { display: flex; align-items: center; gap: 8px; }
+    .ratio-bar-bg { flex: 1; height: 5px; background: var(--surface2); border-radius: 99px; overflow: hidden; min-width: 60px; }
+    .ratio-bar { height: 100%; border-radius: 99px; background: var(--green); transition: width 0.4s ease; }
+    .ratio-text { font-size: 11px; font-weight: 600; color: var(--green); width: 36px; text-align: right; }
+
+    .badge {
+      display: inline-block; font-size: 10px; font-weight: 600;
+      padding: 2px 7px; border-radius: 99px;
+      background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+    }
+    .badge.green { background: var(--green-dim); border-color: rgba(48,209,88,0.25); color: var(--green); }
+
+    .num { font-family: var(--mono); }
+    .dim { color: var(--muted); }
+
+    .idle-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 5px; }
+    .idle-dot.stale { background: var(--muted); }
+
+    .empty-state {
+      padding: 40px 20px; text-align: center;
+      color: var(--muted); font-size: 13px; line-height: 1.6;
+    }
+    .empty-state code { font-family: var(--mono); font-size: 11px; background: var(--surface2); padding: 2px 6px; border-radius: 4px; }
+
+    /* ── Pipeline breakdown ─────────────────────────────────────────────── */
+    .pipeline-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 24px; }
+    .pipeline-item {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
+    }
+    .pipeline-name { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); }
+    .pipeline-count { font-size: 22px; font-weight: 700; color: var(--text); font-family: var(--mono); }
+    .pipeline-desc { font-size: 10px; color: var(--muted); }
+
+    /* ── Events log ─────────────────────────────────────────────────────── */
+    .log-wrap {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      overflow: hidden;
+    }
+    .log-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface2); }
+    .log-body { padding: 10px 0; max-height: 220px; overflow-y: auto; }
+    .log-body::-webkit-scrollbar { width: 4px; }
+    .log-body::-webkit-scrollbar-track { background: transparent; }
+    .log-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+    .log-entry { display: flex; align-items: flex-start; gap: 10px; padding: 5px 14px; font-size: 11px; font-family: var(--mono); }
+    .log-time { color: var(--muted); flex-shrink: 0; }
+    .log-msg { color: var(--text); word-break: break-all; }
+    .log-empty { padding: 20px 14px; color: var(--muted); font-size: 12px; text-align: center; }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    footer {
+      padding: 12px 24px; border-top: 1px solid var(--border); background: var(--surface);
+      display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted);
+    }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+
+    /* ── Responsive ─────────────────────────────────────────────────────── */
+    @media (max-width: 700px) {
+      main { padding: 14px; }
+      .cards { grid-template-columns: repeat(2, 1fr); }
+      .table-wrap { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot" id="logoDot"></div>
+    <span class="logo-text">TokenDiff</span>
+    <span class="logo-sub">proxy</span>
+  </div>
+  <div class="header-right">
+    <span class="port-badge" id="portBadge">:8787</span>
+    <div class="status-pill" id="statusPill">
+      <span class="pulse" id="statusPulse"></span>
+      <span id="statusText">connecting</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- Summary cards -->
+  <div class="cards">
+    <div class="card" style="--accent: #30d15822">
+      <div class="card-label">Tokens Saved</div>
+      <div class="card-value green" id="totalSaved">—</div>
+      <div class="card-sub" id="totalSavedSub">estimated input tokens</div>
+    </div>
+    <div class="card" style="--accent: #3b9eff22">
+      <div class="card-label">Cost Saved</div>
+      <div class="card-value blue" id="totalCost">—</div>
+      <div class="card-sub">at Sonnet $3/M rate</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Compression</div>
+      <div class="card-value" id="totalRatio">—</div>
+      <div class="card-sub">tokens eliminated</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Requests</div>
+      <div class="card-value" id="totalRequests">—</div>
+      <div class="card-sub" id="sessionCount">across 0 sessions</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Actual Input</div>
+      <div class="card-value" id="realInput">—</div>
+      <div class="card-sub">billed by Anthropic</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Cache Reads</div>
+      <div class="card-value" id="cacheReads">—</div>
+      <div class="card-sub">10% cost vs full</div>
+    </div>
+  </div>
+
+  <!-- Lifetime history -->
+  <div class="section-header" style="margin-top:4px">
+    <span class="section-title">Lifetime totals</span>
+    <span id="lifetimeSince" style="font-size:10px;color:var(--muted)"></span>
+  </div>
+  <div class="cards" style="margin-bottom:24px" id="lifetimeCards">
+    <div class="card">
+      <div class="card-label">All-time Saved</div>
+      <div class="card-value green" id="ltSaved">—</div>
+      <div class="card-sub" id="ltSavedSub">tokens</div>
+    </div>
+    <div class="card">
+      <div class="card-label">All-time Cost Saved</div>
+      <div class="card-value blue" id="ltCost">—</div>
+      <div class="card-sub">at Haiku $0.80/M rate</div>
+    </div>
+    <div class="card">
+      <div class="card-label">All-time Requests</div>
+      <div class="card-value" id="ltRequests">—</div>
+      <div class="card-sub" id="ltRatio">compression —</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Today Saved</div>
+      <div class="card-value" id="ltToday">—</div>
+      <div class="card-sub">tokens this session</div>
+    </div>
+  </div>
+
+  <!-- Pipeline breakdown -->
+  <div class="section-header">
+    <span class="section-title">Pipeline hits (all sessions)</span>
+  </div>
+  <div class="pipeline-grid">
+    <div class="pipeline-item">
+      <div class="pipeline-name">Sys Cache</div>
+      <div class="pipeline-count" id="pipeCache">0</div>
+      <div class="pipeline-desc">prompt cache hits</div>
+    </div>
+    <div class="pipeline-item">
+      <div class="pipeline-name">File Diffs</div>
+      <div class="pipeline-count" id="pipeDiffs">0</div>
+      <div class="pipeline-desc">code blocks diffed</div>
+    </div>
+    <div class="pipeline-item">
+      <div class="pipeline-name">Dedup</div>
+      <div class="pipeline-count" id="pipeDedup">0</div>
+      <div class="pipeline-desc">identical req hits</div>
+    </div>
+    <div class="pipeline-item">
+      <div class="pipeline-name">Summaries</div>
+      <div class="pipeline-count" id="pipeSummaries">0</div>
+      <div class="pipeline-desc">history compressed</div>
+    </div>
+  </div>
+
+  <!-- Sessions table -->
+  <div class="section-header">
+    <span class="section-title">Sessions</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Session</th>
+          <th>Reqs</th>
+          <th>Est. Input</th>
+          <th>Saved</th>
+          <th>Ratio</th>
+          <th>Cache</th>
+          <th>Diffs</th>
+          <th>Dedup</th>
+          <th>Cost saved</th>
+          <th>Idle</th>
+        </tr>
+      </thead>
+      <tbody id="sessionsBody">
+        <tr><td colspan="10" class="empty-state">No active sessions.<br>Point your client at <code>http://localhost:8787</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Events log -->
+  <div class="log-wrap">
+    <div class="log-head">
+      <span class="section-title">Recent events</span>
+      <button onclick="clearLog()" style="background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:2px 6px;border-radius:4px;">clear</button>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-empty">Events will appear here as requests flow through the proxy.</div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span>TokenDiff</span>
+  <span style="margin: 0 4px;">·</span>
+  <span>Stats JSON: <a href="/tokendiff/stats" target="_blank">/tokendiff/stats</a></span>
+  <span style="margin: 0 4px;">·</span>
+  <span id="lastRefresh">—</span>
+</footer>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────────
+  let prevSessions = {};
+  let logLines = [];
+  const MAX_LOG = 80;
+
+  // ── Formatting helpers ────────────────────────────────────────────────
+  function fmtNum(n) {
+    if (n == null) return '—';
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+    return String(n);
+  }
+
+  function fmtCost(tokens, ratePerM = 3.0) {
+    const cost = (tokens / 1_000_000) * ratePerM;
+    if (cost < 0.001) return '<$0.001';
+    if (cost < 0.01) return '$' + cost.toFixed(4);
+    return '$' + cost.toFixed(3);
+  }
+
+  function fmtIdle(lastActivity) {
+    const sec = Math.round((Date.now() - lastActivity) / 1000);
+    if (sec < 60) return sec + 's';
+    if (sec < 3600) return Math.round(sec / 60) + 'm';
+    return Math.round(sec / 3600) + 'h';
+  }
+
+  function fmtTime() {
+    return new Date().toTimeString().slice(0, 8);
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ── Log ──────────────────────────────────────────────────────────────
+  function addLog(msg) {
+    logLines.push({ time: fmtTime(), msg });
+    if (logLines.length > MAX_LOG) logLines.shift();
+    renderLog();
+  }
+
+  function renderLog() {
+    const body = document.getElementById('logBody');
+    if (logLines.length === 0) {
+      body.innerHTML = '<div class="log-empty">Events will appear here as requests flow through the proxy.</div>';
+      return;
+    }
+    body.innerHTML = logLines.slice().reverse().map(l =>
+      `<div class="log-entry"><span class="log-time">${l.time}</span><span class="log-msg">${esc(l.msg)}</span></div>`
+    ).join('');
+  }
+
+  function clearLog() {
+    logLines = [];
+    renderLog();
+  }
+
+  // ── Lifetime rendering ────────────────────────────────────────────────────
+  function renderLifetime(history) {
+    if (!history) return;
+    const lt = history.lifetime ?? {};
+    const saved = lt.tokensSaved ?? 0;
+    const orig  = lt.tokensOriginal ?? 0;
+    const ratio = orig > 0 ? ((saved / orig) * 100).toFixed(1) + '%' : '—';
+
+    document.getElementById('ltSaved').textContent    = fmtNum(saved);
+    document.getElementById('ltSavedSub').textContent = `of ${fmtNum(orig)} total`;
+    document.getElementById('ltCost').textContent     = saved > 0 ? fmtCost(saved, 0.80) : '—';
+    document.getElementById('ltRequests').textContent = fmtNum(lt.requestCount ?? 0);
+    document.getElementById('ltRatio').textContent    = `compression ${ratio}`;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const todayRec = (history.days ?? []).find(d => d.date === today);
+    document.getElementById('ltToday').textContent = todayRec ? fmtNum(todayRec.tokensSaved) : '—';
+  }
+
+  // ── Stats rendering ───────────────────────────────────────────────────
+  function renderStats(data) {
+    const sessions = data.sessions || [];
+    renderLifetime(data.history);
+
+    let totalIn = 0, totalSaved = 0, totalReq = 0, totalRealIn = 0;
+    let totalCacheRead = 0, pipeCache = 0, pipeDiffs = 0, pipeDedup = 0, pipeSummaries = 0;
+
+    for (const s of sessions) {
+      totalIn      += s.tokensOriginal;
+      totalSaved   += s.tokensSaved;
+      totalReq     += s.requestCount;
+      totalRealIn  += s.realInputTokens;
+      totalCacheRead += s.cacheReadTokens;
+      pipeCache    += s.cacheHits;
+      pipeDiffs    += s.diffsSent;
+      pipeDedup    += s.dedupHits;
+      pipeSummaries += s.summariesDone;
+    }
+
+    const ratio = totalIn > 0 ? ((totalSaved / totalIn) * 100).toFixed(1) + '%' : '—';
+
+    document.getElementById('totalSaved').textContent     = fmtNum(totalSaved);
+    document.getElementById('totalSavedSub').textContent  = `of ${fmtNum(totalIn)} estimated`;
+    document.getElementById('totalCost').textContent      = totalSaved > 0 ? fmtCost(totalSaved) : '—';
+    document.getElementById('totalRatio').textContent     = ratio;
+    document.getElementById('totalRequests').textContent  = fmtNum(totalReq);
+    document.getElementById('sessionCount').textContent   = `across ${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
+    document.getElementById('realInput').textContent      = totalRealIn > 0 ? fmtNum(totalRealIn) : '—';
+    document.getElementById('cacheReads').textContent     = totalCacheRead > 0 ? fmtNum(totalCacheRead) : '—';
+
+    document.getElementById('pipeCache').textContent     = pipeCache;
+    document.getElementById('pipeDiffs').textContent     = pipeDiffs;
+    document.getElementById('pipeDedup').textContent     = pipeDedup;
+    document.getElementById('pipeSummaries').textContent = pipeSummaries;
+
+    // Sessions table
+    const tbody = document.getElementById('sessionsBody');
+    if (sessions.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="10" class="empty-state">No active sessions.<br>Point your client at <code>http://localhost:8787</code></td></tr>`;
+    } else {
+      tbody.innerHTML = sessions.map(s => {
+        const ratio = s.tokensOriginal > 0 ? (s.tokensSaved / s.tokensOriginal * 100) : 0;
+        const ratioStr = ratio.toFixed(1) + '%';
+        const isActive = (Date.now() - s.lastActivity) < 30_000;
+
+        // Detect new activity vs previous render
+        const prev = prevSessions[s.id];
+        if (prev && s.requestCount > prev.requestCount) {
+          addLog(`[${s.id.slice(0, 16)}] ${s.requestCount - prev.requestCount} new request(s) · saved ~${fmtNum(s.tokensSaved - prev.tokensSaved)} tokens`);
+        } else if (!prev) {
+          addLog(`new session: ${s.id}`);
+        }
+
+        return `<tr>
+          <td><span class="idle-dot ${isActive ? '' : 'stale'}"></span><span class="session-id">${esc(s.id.length > 20 ? s.id.slice(0, 19) + '…' : s.id)}</span></td>
+          <td class="num">${s.requestCount}</td>
+          <td class="num dim">${fmtNum(s.tokensOriginal)}</td>
+          <td class="num">${fmtNum(s.tokensSaved)}</td>
+          <td>
+            <div class="ratio-bar-wrap">
+              <div class="ratio-bar-bg"><div class="ratio-bar" style="width:${Math.min(ratio,100)}%"></div></div>
+              <span class="ratio-text">${ratioStr}</span>
+            </div>
+          </td>
+          <td class="num dim">${s.cacheHits}</td>
+          <td class="num dim">${s.diffsSent}</td>
+          <td class="num dim">${s.dedupHits}</td>
+          <td class="num">${s.tokensSaved > 0 ? fmtCost(s.tokensSaved) : '—'}</td>
+          <td class="dim">${fmtIdle(s.lastActivity)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // Save for diffing next tick
+    prevSessions = Object.fromEntries(sessions.map(s => [s.id, { ...s }]));
+  }
+
+  // ── Poll ──────────────────────────────────────────────────────────────
+  let failCount = 0;
+
+  async function poll() {
+    try {
+      const res = await fetch('/tokendiff/stats');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      failCount = 0;
+      setStatus('live');
+      renderStats(data);
+      document.getElementById('lastRefresh').textContent = 'updated ' + fmtTime();
+    } catch (e) {
+      failCount++;
+      if (failCount > 2) setStatus('error');
+    }
+  }
+
+  function setStatus(state) {
+    const pill = document.getElementById('statusPill');
+    const text = document.getElementById('statusText');
+    const dot  = document.getElementById('statusPulse');
+    const logo = document.getElementById('logoDot');
+    if (state === 'live') {
+      pill.className = 'status-pill live';
+      text.textContent = 'live';
+      dot.className = 'pulse';
+      logo.style.background = 'var(--green)';
+    } else {
+      pill.className = 'status-pill error';
+      text.textContent = 'offline';
+      dot.className = 'pulse err';
+      logo.style.background = 'var(--red)';
+    }
+  }
+
+  // Detect port from URL
+  const port = location.port || '8787';
+  document.getElementById('portBadge').textContent = ':' + port;
+
+  poll();
+  setInterval(poll, 1500);
+</script>
+</body>
+</html>
