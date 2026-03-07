@@ -12,7 +12,20 @@ import { estimateTokens } from './pricing.js';
 import { startDashboard, log } from './dashboard.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DASHBOARD_HTML = readFileSync(join(__dirname, 'web/dashboard.html'), 'utf8');
+
+// Dashboard HTML lives in src/web/ — resolve relative to compiled or source location
+let DASHBOARD_HTML = '';
+try {
+  // Try sibling web/ dir first (running from src/ via tsx)
+  DASHBOARD_HTML = readFileSync(join(__dirname, 'web/dashboard.html'), 'utf8');
+} catch {
+  try {
+    // Fallback: running from dist/, look in ../src/web/
+    DASHBOARD_HTML = readFileSync(join(__dirname, '../src/web/dashboard.html'), 'utf8');
+  } catch {
+    // Production without dashboard file — not fatal, dashboard just won't serve
+  }
+}
 
 const PORT = parseInt(process.env.PORT ?? '8787', 10);
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
@@ -595,10 +608,13 @@ async function start(): Promise<void> {
   // Flush stats to disk every 30s
   setInterval(() => flushHistory(getAllSessions()), 30_000).unref();
 
+  // Always print binding info so Railway logs confirm the server is up
+  console.log(`Server listening on 0.0.0.0:${PORT}`);
+
   if (USE_DASHBOARD && NODE_ENV !== 'production') {
     startDashboard(PORT);
   } else {
-    console.log(`Trimr proxy running on http://0.0.0.0:${PORT} [${NODE_ENV}]`);
+    console.log(`Trimr proxy running [${NODE_ENV}]`);
     console.log('Pass Authorization: Bearer <api-key> or set ANTHROPIC_API_KEY env var.');
   }
 }

@@ -11,7 +11,7 @@
     "dev:nodash": "cross-env TOKENDIFF_DASHBOARD=false tsx src/proxy.ts",
     "test": "node --import tsx --test test/dedup.test.ts test/differ.test.ts test/cache.test.ts test/session.test.ts test/savings.test.ts",
     "build": "tsc",
-    "start": "NODE_ENV=production node dist/proxy.js"
+    "start": "node dist/proxy.js"
   },
   "engines": {
     "node": ">=18.0.0"
