@@ -1,126 +1,80 @@
-# Trimr (TokenDiff)
+# Trimr
 
-Proxy that sits between your AI tools and the Anthropic/OpenAI APIs, reducing token usage through intelligent caching, diffing, and conversation summarisation.
+Transparent token-saving proxy for Anthropic and OpenAI APIs. Intercepts HTTPS API calls at the system level -- no configuration changes needed in Claude Code, Cursor, Codex, or any other tool.
 
-Works locally or deployed to Railway (or any container host) as a shared proxy.
+## How it works
 
-## Install (local)
+1. Generates a local CA certificate and installs it in your system trust store
+2. Adds hosts file entries to redirect `api.anthropic.com` and `api.openai.com` to `127.0.0.1`
+3. Runs a local HTTPS server that terminates TLS with domain-specific certificates
+4. Applies the compression pipeline (caching, diffing, dedup, summarisation) to every request
+5. Forwards the compressed request to the real API with the original API key intact
+
+Your tools don't need any configuration changes. They make HTTPS calls to `api.anthropic.com` as usual, but the hosts file redirects them to Trimr first.
+
+## Quick start
 
 ```bash
-cd tokendiff
+cd trimr
 npm install
-npm run dev
+
+# Install (generates certs, modifies hosts, starts proxy)
+# Requires administrator/sudo for hosts file and cert store
+npx trimr install
+
+# That's it. Claude Code, Cursor, Codex all work automatically.
 ```
 
-> Requires Node.js 18+.
-
-## Hosted usage (Railway)
-
-If Trimr is deployed at e.g. `https://trimr-production.up.railway.app`, point your tools at it instead of localhost.
-
-### Cursor
-
-Settings > Models > OpenAI Base URL:
+## CLI commands
 
 ```
-https://trimr-production.up.railway.app/v1
+trimr install     Set up transparent proxy (certs, hosts, autostart)
+trimr uninstall   Cleanly remove all system modifications
+trimr start       Start the proxy service
+trimr stop        Stop the proxy service
+trimr status      Show proxy status and lifetime stats
+trimr help        Show this help
 ```
 
-Pass your Anthropic API key as the API key in Cursor's settings — Trimr forwards it upstream.
-
-### Windsurf
-
-In `~/.codeium/windsurf/config.json`:
-
-```json
-{
-  "anthropicBaseUrl": "https://trimr-production.up.railway.app"
-}
-```
-
-### Claude Code
+## Uninstall
 
 ```bash
-ANTHROPIC_BASE_URL=https://trimr-production.up.railway.app claude
+npx trimr uninstall
 ```
 
-### Custom app / SDK
-
-```typescript
-import Anthropic from '@anthropic-ai/sdk';
-
-const client = new Anthropic({
-  baseURL: 'https://trimr-production.up.railway.app',
-  apiKey: 'sk-ant-...',  // your key — forwarded upstream
-});
-```
-
-Or use `Authorization: Bearer <your-api-key>` header with any HTTP client.
-
-## Authentication
-
-Trimr uses bearer token auth. Include your own API key in requests — Trimr forwards it to the upstream provider on your behalf. Session state is tied to a hash of your API key, so each user gets isolated sessions automatically.
-
-Supported auth methods (in priority order):
-1. `Authorization: Bearer <key>` header
-2. `x-api-key: <key>` header
-3. `ANTHROPIC_API_KEY` env var (fallback for single-user local setups)
-
-## OpenAI-compatible proxy
-
-Trimr also proxies OpenAI API requests at `/openai/v1/chat/completions`. The same compression pipeline (diffing, dedup, summarisation) is applied before forwarding to `api.openai.com`.
-
-```bash
-curl https://trimr-production.up.railway.app/openai/v1/chat/completions \
-  -H "Authorization: Bearer sk-..." \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}'
-```
-
-Point any OpenAI-compatible client at `https://trimr-production.up.railway.app/openai` as the base URL.
+Cleanly reverses all changes:
+- Stops the proxy
+- Removes hosts file entries
+- Removes CA from system trust store
+- Removes autostart
+- Removes certificate files
 
 ## Compression pipeline
 
 | Step | What it does | Savings |
 |---|---|---|
-| **System prompt cache** | Hashes system prompt; on repeat calls adds Anthropic's native `cache_control` breakpoint so the prompt costs 10% | ~90% of system prompt on 2nd+ call |
+| **System prompt cache** | Hashes system prompt; on repeat calls adds Anthropic's native `cache_control` breakpoint | ~90% of system prompt on 2nd+ call |
 | **File diffing** | Detects fenced code blocks, stores last version per file, sends only unified diffs | 60-90% on iterative edits |
-| **History summarisation** | Once history > 8 000 tokens, replaces old turns with a Haiku summary | 50-80% on long sessions |
+| **History summarisation** | Once history > 8000 tokens, replaces old turns with a Haiku summary | 50-80% on long sessions |
 | **Dedup** | Identical requests within 5 min return cached responses | 100% on duplicate calls |
 | **Streaming passthrough** | SSE events forwarded byte-for-byte | no overhead |
 
-## Example token savings
+## Proxy mode (non-intercept)
 
-| Scenario | Tokens without proxy | Tokens with proxy | Saving |
-|---|---|---|---|
-| 10 calls, same 2 000-token system prompt | 20 000 | 2 000 + 9 x 200 = 3 800 | **81%** |
-| 5 rounds of 500-line file edits | 12 500 | ~2 500 (diffs only) | **80%** |
-| 20-turn chat, 10 000 token history | 20 000 | ~5 000 (summary + 4 turns) | **75%** |
-
-## Health check
+Trimr also works as a standard proxy without system modifications. Set `ANTHROPIC_BASE_URL` or your tool's base URL to `http://localhost:8787`:
 
 ```bash
-curl https://trimr-production.up.railway.app/health
-```
+# Start in standard proxy mode
+npm run dev
 
-Returns:
-```json
-{
-  "status": "ok",
-  "uptime": 3600,
-  "totalTokensSaved": 150000,
-  "activeSessions": 3,
-  "environment": "production"
-}
+# Point Claude Code at it
+ANTHROPIC_BASE_URL=http://localhost:8787 claude
 ```
 
 ## Dashboard
 
-The terminal dashboard starts automatically in development. Disabled in production (`NODE_ENV=production`).
-
-```bash
-TOKENDIFF_DASHBOARD=false npm run dev   # disable manually
-```
+In intercept mode, the dashboard runs at `http://localhost:3000`.
+In proxy mode, the terminal dashboard starts automatically.
 
 Stats are also available as JSON at `/tokendiff/stats`.
 
@@ -128,25 +82,42 @@ Stats are also available as JSON at `/tokendiff/stats`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | - | Fallback API key (optional — users pass their own via bearer token) |
-| `PORT` | `8787` | Server port |
-| `NODE_ENV` | `development` | Set to `production` for Railway deployments |
-| `TOKENDIFF_DASHBOARD` | `true` | Set `false` to disable blessed TUI |
+| `ANTHROPIC_API_KEY` | - | Fallback API key (optional -- tools pass their own) |
+| `PORT` | `8787` | Proxy port (standard mode) |
+| `DASHBOARD_PORT` | `3000` | Dashboard port (intercept mode) |
+| `NODE_ENV` | `development` | Set to `production` for deployments |
+| `TRIMR_MODE` | - | Set to `intercept` for transparent HTTPS interception |
+| `TOKENDIFF_DASHBOARD` | `true` | Set `false` to disable terminal UI |
+
+## Data directory
+
+All Trimr data is stored in `~/.trimr/`:
+
+```
+~/.trimr/
+  certs/           # CA and domain certificates
+  trimr.pid        # PID of running proxy
+  trimr.log        # Proxy log output
+```
+
+Historical stats are stored in `~/.tokendiff/history.json`.
 
 ## Deploy to Railway
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template)
+Trimr also works as a hosted proxy on Railway. See `railway.toml` for config. In hosted mode, users pass their own API keys via `Authorization: Bearer <key>`.
 
-1. Fork this repo
-2. Create a new Railway project from the repo
-3. Set `PORT` env var (Railway provides this automatically)
-4. Optionally set `ANTHROPIC_API_KEY` as a default fallback
-5. Deploy — the `/health` endpoint is used for health checks
-
-## Optional session header
-
-To get per-project stats (instead of per-API-key grouping), pass:
+## Architecture
 
 ```
-x-tokendiff-session: my-project-name
+[Claude Code / Cursor / Codex]
+        |
+        | HTTPS to api.anthropic.com (resolves to 127.0.0.1 via hosts file)
+        v
+  [Trimr HTTPS Server :443]
+        |
+        | Compression pipeline (cache, diff, dedup, summarise)
+        |
+        | HTTPS to real api.anthropic.com (resolved IP)
+        v
+  [Anthropic / OpenAI API]
 ```
