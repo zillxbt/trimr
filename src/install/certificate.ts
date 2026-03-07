@@ -157,10 +157,10 @@ export function installCATrust(): { success: boolean; message: string } {
 
   try {
     if (platform === 'win32') {
-      // Import into Windows Trusted Root store (requires elevation)
+      // Import into Windows Trusted Root store — elevate via PowerShell
       execSync(
-        `certutil -addstore -f "Root" "${CA_CERT_FILE}"`,
-        { stdio: 'pipe' },
+        `powershell -Command "Start-Process certutil -ArgumentList '-addstore','-f','Root','${CA_CERT_FILE.replace(/\\/g, '\\\\')}' -Verb RunAs -Wait"`,
+        { stdio: 'pipe', timeout: 30000 },
       );
       return { success: true, message: 'CA installed in Windows Trusted Root Certification Authorities' };
     }
@@ -189,8 +189,8 @@ export function removeCATrust(): { success: boolean; message: string } {
   try {
     if (platform === 'win32') {
       execSync(
-        `certutil -delstore "Root" "${CA_CN}"`,
-        { stdio: 'pipe' },
+        `powershell -Command "Start-Process certutil -ArgumentList '-delstore','Root','${CA_CN}' -Verb RunAs -Wait"`,
+        { stdio: 'pipe', timeout: 30000 },
       );
       return { success: true, message: 'CA removed from Windows trust store' };
     }

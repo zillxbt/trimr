@@ -5,9 +5,10 @@
  *   1. Generate CA certificate
  *   2. Install CA in system trust store
  *   3. Generate domain certificates for intercepted APIs
- *   4. Add hosts file entries (api.anthropic.com → 127.0.0.1)
- *   5. Set up autostart
- *   6. Start the proxy
+ *   4. Set up autostart
+ *   5. Start the proxy and verify it's healthy on port 443
+ *   6. Add hosts file entries (LAST — only after proxy is confirmed running)
+ *      → Auto-rollback: if proxy dies after hosts change, entries are removed
  *
  * Uninstall flow:
  *   1. Stop the proxy
@@ -16,6 +17,7 @@
  *   4. Remove autostart
  *   5. Remove certificate files
  */
+import { createConnection } from 'net';
 import {
   getOrCreateCA,
   getOrCreateDomainCert,
@@ -25,7 +27,7 @@ import {
   INTERCEPTED_DOMAINS,
 } from './certificate.js';
 import { addHostsEntries, removeHostsEntries } from './hosts.js';
-import { startService, stopService, setupAutostart, removeAutostart } from './service.js';
+import { startService, stopService, setupAutostart, removeAutostart, isRunning } from './service.js';
 
 function green(s: string): string { return `\x1b[32m${s}\x1b[0m`; }
 function red(s: string): string { return `\x1b[31m${s}\x1b[0m`; }
@@ -48,7 +50,44 @@ function report(result: StepResult): boolean {
 
 // ── Install ───────────────────────────────────────────────────────────────────
 
-export function install(): boolean {
+/**
+ * Wait for the proxy to accept TCP connections on port 443.
+ * Retries up to `attempts` times with `delayMs` between each.
+ */
+function waitForProxy(port = 443, attempts = 10, delayMs = 500): Promise<boolean> {
+  return new Promise(resolve => {
+    let remaining = attempts;
+
+    function tryConnect() {
+      const sock = createConnection({ port, host: '127.0.0.1' }, () => {
+        sock.destroy();
+        resolve(true);
+      });
+      sock.on('error', () => {
+        sock.destroy();
+        remaining--;
+        if (remaining <= 0) {
+          resolve(false);
+        } else {
+          setTimeout(tryConnect, delayMs);
+        }
+      });
+      sock.setTimeout(1000, () => {
+        sock.destroy();
+        remaining--;
+        if (remaining <= 0) {
+          resolve(false);
+        } else {
+          setTimeout(tryConnect, delayMs);
+        }
+      });
+    }
+
+    tryConnect();
+  });
+}
+
+export async function install(): Promise<boolean> {
   console.log(`\n${bold('Trimr Install')}`);
   console.log(dim('Setting up transparent HTTPS intercept proxy\n'));
 
@@ -75,23 +114,62 @@ export function install(): boolean {
     allOk = false;
   }
 
-  // Step 4 — Hosts
-  step('3. Hosts file');
-  if (!report(addHostsEntries())) allOk = false;
-
-  // Step 5 — Autostart
-  step('4. Autostart');
+  // Step 3 — Autostart (safe, doesn't affect connectivity)
+  step('3. Autostart');
   const autoResult = setupAutostart();
   if (!report(autoResult)) {
     warn('Autostart setup failed — you can start Trimr manually with: trimr start');
   }
 
-  // Step 6 — Start
-  step('5. Starting proxy');
+  // Step 4 — Start proxy BEFORE modifying hosts
+  step('4. Starting proxy');
   const startResult = startService();
-  if (!report(startResult)) allOk = false;
+  if (!report(startResult)) {
+    allOk = false;
+    fail('Proxy failed to start — skipping hosts file modification for safety');
+    printSummary(allOk);
+    return allOk;
+  }
 
-  // Summary
+  // Step 5 — Verify proxy is actually listening on port 443
+  step('5. Verifying proxy health');
+  const healthy = await waitForProxy(443, 10, 500);
+  if (!healthy) {
+    fail('Proxy is not accepting connections on port 443 after 5s');
+    warn('Skipping hosts file modification — API connectivity would break');
+    warn('Check logs with: trimr status');
+    allOk = false;
+    printSummary(allOk);
+    return allOk;
+  }
+  ok('Proxy is listening on port 443');
+
+  // Step 6 — Hosts file (LAST — only after proxy is verified healthy)
+  step('6. Hosts file');
+  const hostsResult = addHostsEntries();
+  if (!report(hostsResult)) {
+    allOk = false;
+  } else {
+    // Verify connectivity still works after hosts change
+    const stillHealthy = await waitForProxy(443, 3, 300);
+    if (!stillHealthy) {
+      fail('Proxy unreachable after hosts modification — rolling back');
+      const rollback = removeHostsEntries();
+      if (rollback.success) {
+        ok('Hosts file restored — API connectivity preserved');
+      } else {
+        fail(`CRITICAL: Hosts rollback failed: ${rollback.message}`);
+        fail('Manually remove trimr-proxy lines from your hosts file!');
+      }
+      allOk = false;
+    }
+  }
+
+  printSummary(allOk);
+  return allOk;
+}
+
+function printSummary(allOk: boolean): void {
   console.log('');
   if (allOk) {
     console.log(green('  Install complete!'));
@@ -103,8 +181,6 @@ export function install(): boolean {
     console.log(yellow('  Install completed with warnings. Check messages above.'));
   }
   console.log('');
-
-  return allOk;
 }
 
 // ── Uninstall ─────────────────────────────────────────────────────────────────

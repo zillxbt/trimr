@@ -1,9 +1,11 @@
 import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
 import { createServer as createHttpsServer } from 'https';
 import { createServer as createHttpServer } from 'http';
+import { createSecureContext } from 'tls';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { homedir } from 'os';
 import { getOrCreateSession, getAllSessions, getTotalTokensSaved, hashApiKey } from './session.js';
 import { applySystemPromptCache, type AnthropicRequest, type AnthropicMessage, type ContentBlock } from './pipeline/cache.js';
 import { applyFileDiffing } from './pipeline/differ.js';
@@ -43,7 +45,7 @@ const startTime = Date.now();
 function loadInterceptCerts(): Map<string, { key: string; cert: string }> | null {
   if (!INTERCEPT_MODE) return null;
 
-  const certDir = join(require('os').homedir(), '.trimr', 'certs');
+  const certDir = join(homedir(), '.trimr', 'certs');
   const domains = ['api.anthropic.com', 'api.openai.com'];
   const certs = new Map<string, { key: string; cert: string }>();
 
@@ -642,7 +644,7 @@ async function start(): Promise<void> {
         SNICallback: (servername, cb) => {
           const domainCert = interceptCerts.get(servername);
           if (domainCert) {
-            const ctx = require('tls').createSecureContext({
+            const ctx = createSecureContext({
               key: domainCert.key,
               cert: domainCert.cert,
             });
@@ -677,8 +679,7 @@ async function start(): Promise<void> {
         SNICallback: (servername: string, cb: (err: Error | null, ctx?: any) => void) => {
           const domainCert = interceptCerts.get(servername);
           if (domainCert) {
-            const tls = require('tls');
-            cb(null, tls.createSecureContext({
+            cb(null, createSecureContext({
               key: domainCert.key,
               cert: domainCert.cert,
             }));

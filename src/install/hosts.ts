@@ -1,8 +1,13 @@
 /**
  * Hosts file modification — redirects API domains to 127.0.0.1.
+ *
+ * On Windows, writes a temp PowerShell script and runs it elevated.
+ * On macOS/Linux, uses sudo.
  */
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { INTERCEPTED_DOMAINS } from './certificate.js';
 
 const MARKER = '# trimr-proxy';
@@ -17,23 +22,21 @@ function buildEntries(): string[] {
   return INTERCEPTED_DOMAINS.map(d => `127.0.0.1  ${d}  ${MARKER}`);
 }
 
-/** Read the current hosts file content */
 function readHosts(): string {
   return readFileSync(getHostsPath(), 'utf8');
 }
 
-/** Write hosts file — elevated on Unix, direct on Windows (expects elevated process) */
-function writeHosts(content: string): void {
-  const hostsPath = getHostsPath();
-
-  if (process.platform === 'win32') {
-    // On Windows we're already running elevated (installer handles this)
-    writeFileSync(hostsPath, content);
-  } else {
-    // Use tee via sudo to write
-    execSync(`echo '${content.replace(/'/g, "'\\''")}' | sudo tee "${hostsPath}" > /dev/null`, {
-      stdio: 'pipe',
-    });
+/** Run a PowerShell script with elevation on Windows */
+function runElevatedPS(script: string): void {
+  const tmpScript = join(tmpdir(), `trimr-hosts-${Date.now()}.ps1`);
+  writeFileSync(tmpScript, script);
+  try {
+    execSync(
+      `powershell -Command "Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','${tmpScript}' -Verb RunAs -Wait"`,
+      { stdio: 'pipe', timeout: 30000 },
+    );
+  } finally {
+    try { unlinkSync(tmpScript); } catch { /* */ }
   }
 }
 
@@ -56,12 +59,13 @@ export function addHostsEntries(): { success: boolean; message: string } {
     }
 
     const entries = buildEntries();
-    const newContent = current.trimEnd() + '\n\n' + entries.join('\n') + '\n';
 
     if (process.platform === 'win32') {
-      writeFileSync(getHostsPath(), newContent);
+      const script = entries
+        .map(e => `Add-Content -Path '${getHostsPath()}' -Value '${e}' -Force`)
+        .join('\n');
+      runElevatedPS(script);
     } else {
-      // Write each entry with sudo tee -a
       for (const entry of entries) {
         execSync(`echo '${entry}' | sudo tee -a "${getHostsPath()}" > /dev/null`, {
           stdio: 'pipe',
@@ -69,7 +73,6 @@ export function addHostsEntries(): { success: boolean; message: string } {
       }
     }
 
-    // Flush DNS cache
     flushDns();
 
     return {
@@ -90,15 +93,13 @@ export function removeHostsEntries(): { success: boolean; message: string } {
       return { success: true, message: 'No Trimr entries found in hosts file' };
     }
 
-    const filtered = current
-      .split('\n')
-      .filter(line => !line.includes(MARKER))
-      .join('\n')
-      // Clean up multiple blank lines left behind
-      .replace(/\n{3,}/g, '\n\n');
-
     if (process.platform === 'win32') {
-      writeFileSync(getHostsPath(), filtered);
+      const script = `
+$hostsPath = '${getHostsPath()}'
+$content = Get-Content -Path $hostsPath | Where-Object { $_ -notmatch '${MARKER}' }
+Set-Content -Path $hostsPath -Value $content -Force
+`;
+      runElevatedPS(script);
     } else {
       execSync(
         `grep -v '${MARKER}' "${getHostsPath()}" | sudo tee "${getHostsPath()}" > /dev/null`,
@@ -121,7 +122,6 @@ function flushDns(): void {
     } else if (process.platform === 'darwin') {
       execSync('sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder', { stdio: 'pipe' });
     }
-    // Linux: most distros auto-update, systemd-resolved can be flushed but it's not always present
   } catch {
     // Non-fatal
   }

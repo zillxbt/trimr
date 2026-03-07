@@ -18,6 +18,8 @@ import { getHistory } from './persistence.js';
 import { getCACertPath, getCertDir } from './install/certificate.js';
 import { getPidFile, getLogFile } from './install/paths.js';
 import { existsSync, readFileSync } from 'fs';
+import { join as pathJoin } from 'path';
+import { homedir } from 'os';
 
 function green(s: string): string { return `\x1b[32m${s}\x1b[0m`; }
 function red(s: string): string { return `\x1b[31m${s}\x1b[0m`; }
@@ -29,7 +31,10 @@ const command = process.argv[2];
 
 switch (command) {
   case 'install':
-    install();
+    install().catch((e) => {
+      console.log(red(`  x Install failed: ${(e as Error).message}`));
+      process.exit(1);
+    });
     break;
 
   case 'uninstall':
@@ -100,7 +105,7 @@ function showStatus(): void {
 
   // Stats from persisted history
   try {
-    const historyPath = require('path').join(require('os').homedir(), '.tokendiff', 'history.json');
+    const historyPath = pathJoin(homedir(), '.tokendiff', 'history.json');
     if (existsSync(historyPath)) {
       const history = JSON.parse(readFileSync(historyPath, 'utf8'));
       const lt = history.lifetime;

@@ -5,7 +5,7 @@
  * dependencies (node-windows/node-mac/systemd). The installer can optionally
  * set up OS-level autostart.
  */
-import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync, openSync, mkdirSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
@@ -75,10 +75,21 @@ export function startService(): { success: boolean; message: string; pid?: numbe
   }
 
   const logFile = getLogFile();
-  const out = require('fs').openSync(logFile, 'a');
-  const err = require('fs').openSync(logFile, 'a');
 
-  const child = spawn(cmd, args, {
+  // Log the launch command for debugging
+  appendFileSync(logFile, `\n[${new Date().toISOString()}] Starting Trimr: "${cmd}" ${args.map(a => `"${a}"`).join(' ')}\n`);
+
+  const out = openSync(logFile, 'a');
+  const err = openSync(logFile, 'a');
+
+  // On Windows, shell:true is needed for .cmd shims (tsx) and detached processes,
+  // but it splits on spaces. Wrap the command in quotes to handle paths like
+  // "C:\Program Files\nodejs\node.exe".
+  const isWin = process.platform === 'win32';
+  const spawnCmd = isWin ? `"${cmd}"` : cmd;
+  const spawnArgs = isWin ? args.map(a => `"${a}"`) : args;
+
+  const child = spawn(spawnCmd, spawnArgs, {
     detached: true,
     stdio: ['ignore', out, err],
     env: {
@@ -87,7 +98,11 @@ export function startService(): { success: boolean; message: string; pid?: numbe
       TRIMR_MODE: 'intercept',
     },
     cwd: PROJECT_ROOT,
-    shell: process.platform === 'win32',
+    shell: isWin,
+  });
+
+  child.on('error', (spawnErr) => {
+    appendFileSync(logFile, `[${new Date().toISOString()}] Spawn error: ${spawnErr.message}\n`);
   });
 
   if (child.pid) {
@@ -96,7 +111,7 @@ export function startService(): { success: boolean; message: string; pid?: numbe
     return { success: true, message: `Trimr started (PID ${child.pid})`, pid: child.pid };
   }
 
-  return { success: false, message: 'Failed to start Trimr process' };
+  return { success: false, message: 'Failed to start Trimr process — check log: ' + logFile };
 }
 
 /** Stop the running proxy */
@@ -140,12 +155,23 @@ export function setupAutostart(): { success: boolean; message: string } {
         'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup',
       );
       const vbsPath = join(startupDir, 'trimr.vbs');
-      const nodeExe = process.execPath.replace(/\\/g, '\\\\');
-      const cliPath = join(PROJECT_ROOT, 'src', 'cli.ts').replace(/\\/g, '\\\\');
-      const tsxPath = join(PROJECT_ROOT, 'node_modules', '.bin', 'tsx').replace(/\\/g, '\\\\');
+      const cliDist = join(PROJECT_ROOT, 'dist', 'cli.js');
+      const cliSrc = join(PROJECT_ROOT, 'src', 'cli.ts');
 
+      // Determine whether to use node (dist) or tsx (dev)
+      // VBS requires doubled quotes inside a quoted string: ""path with spaces""
+      let vbsCmd: string;
+      if (existsSync(join(PROJECT_ROOT, 'dist', 'proxy.js'))) {
+        // Production: use node directly
+        vbsCmd = `"""${process.execPath}"" ""${cliDist}"" start"`;
+      } else {
+        // Dev: use tsx.cmd (must use .cmd on Windows for direct execution)
+        const tsxBin = join(PROJECT_ROOT, 'node_modules', '.bin', 'tsx.cmd');
+        vbsCmd = `"""${tsxBin}"" ""${cliSrc}"" start"`;
+      }
+      // WshShell.Run expects: command, windowStyle (0=hidden), waitOnReturn
       const vbs = `Set WshShell = CreateObject("WScript.Shell")\n` +
-        `WshShell.Run """${tsxPath}"" ""${cliPath}"" start", 0, False\n`;
+        `WshShell.Run ${vbsCmd}, 0, False\n`;
 
       writeFileSync(vbsPath, vbs);
       return { success: true, message: `Autostart added: ${vbsPath}` };
@@ -181,14 +207,14 @@ export function setupAutostart(): { success: boolean; message: string } {
 
     // Linux — systemd user service
     const serviceDir = join(process.env.HOME ?? '~', '.config', 'systemd', 'user');
-    require('fs').mkdirSync(serviceDir, { recursive: true });
+    mkdirSync(serviceDir, { recursive: true });
     const servicePath = join(serviceDir, 'trimr.service');
     const service = `[Unit]
 Description=Trimr Token Proxy
 After=network.target
 
 [Service]
-ExecStart=${process.execPath} ${join(PROJECT_ROOT, 'dist', 'proxy.js')}
+ExecStart="${process.execPath}" "${join(PROJECT_ROOT, 'dist', 'proxy.js')}"
 Restart=on-failure
 Environment=TOKENDIFF_DASHBOARD=false
 Environment=TRIMR_MODE=intercept
