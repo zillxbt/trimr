@@ -10,6 +10,7 @@ import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import { getPidFile, getLogFile, getTrimrDir } from './paths.js';
+import { getCACertPath } from './certificate.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, '../..');
@@ -172,11 +173,13 @@ export function setupAutostart(): { success: boolean; message: string } {
         vbsCmd = `"""${tsxBin}"" ""${cliSrc}"" start"`;
       }
       // Set intercept env vars, then launch hidden
+      const caCertPath = getCACertPath();
       const vbs = `Set WshShell = CreateObject("WScript.Shell")\n` +
         `Set WshEnv = WshShell.Environment("Process")\n` +
         `WshEnv("TRIMR_MODE") = "intercept"\n` +
         `WshEnv("PORT") = "443"\n` +
         `WshEnv("TOKENDIFF_DASHBOARD") = "false"\n` +
+        `WshEnv("NODE_EXTRA_CA_CERTS") = "${caCertPath}"\n` +
         `WshShell.Run ${vbsCmd}, 0, False\n`;
 
       writeFileSync(vbsPath, vbs);
@@ -204,6 +207,7 @@ export function setupAutostart(): { success: boolean; message: string } {
     <key>TOKENDIFF_DASHBOARD</key><string>false</string>
     <key>TRIMR_MODE</key><string>intercept</string>
     <key>PORT</key><string>443</string>
+    <key>NODE_EXTRA_CA_CERTS</key><string>${getCACertPath()}</string>
   </dict>
 </dict>
 </plist>`;
@@ -226,6 +230,7 @@ Restart=on-failure
 Environment=TOKENDIFF_DASHBOARD=false
 Environment=TRIMR_MODE=intercept
 Environment=PORT=443
+Environment=NODE_EXTRA_CA_CERTS=${getCACertPath()}
 
 [Install]
 WantedBy=default.target

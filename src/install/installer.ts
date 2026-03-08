@@ -18,12 +18,17 @@
  *   5. Remove certificate files
  */
 import { createConnection } from 'net';
+import { execSync } from 'child_process';
+import { readFileSync, writeFileSync, appendFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import {
   getOrCreateCA,
   getOrCreateDomainCert,
   installCATrust,
   removeCATrust,
   removeCertFiles,
+  getCACertPath,
   INTERCEPTED_DOMAINS,
 } from './certificate.js';
 import { addHostsEntries, removeHostsEntries } from './hosts.js';
@@ -168,6 +173,52 @@ export async function install(): Promise<boolean> {
     }
   }
 
+  // Step 7 — Set NODE_EXTRA_CA_CERTS so Node-based tools trust the CA
+  step('7. Node CA trust (NODE_EXTRA_CA_CERTS)');
+  const caPath = getCACertPath();
+  try {
+    if (process.platform === 'win32') {
+      // setx sets a permanent user-level env var (survives reboots)
+      execSync(`setx NODE_EXTRA_CA_CERTS "${caPath}"`, { stdio: 'pipe' });
+      ok(`Set NODE_EXTRA_CA_CERTS=${caPath}`);
+      warn('Restart your terminal/IDE for the env var to take effect');
+    } else if (process.platform === 'darwin') {
+      // Add to shell profile
+      const profile = join(homedir(), '.zshrc');
+      const line = `export NODE_EXTRA_CA_CERTS="${caPath}" # trimr-proxy`;
+      try {
+        const content = readFileSync(profile, 'utf8');
+        if (!content.includes('trimr-proxy')) {
+          appendFileSync(profile, `\n${line}\n`);
+        }
+      } catch {
+        appendFileSync(profile, `\n${line}\n`);
+      }
+      ok(`Added NODE_EXTRA_CA_CERTS to ~/.zshrc`);
+      warn('Run `source ~/.zshrc` or restart your terminal');
+    } else {
+      // Linux — add to .bashrc
+      const profile = join(homedir(), '.bashrc');
+      const line = `export NODE_EXTRA_CA_CERTS="${caPath}" # trimr-proxy`;
+      try {
+        const content = readFileSync(profile, 'utf8');
+        if (!content.includes('trimr-proxy')) {
+          appendFileSync(profile, `\n${line}\n`);
+        }
+      } catch {
+        appendFileSync(profile, `\n${line}\n`);
+      }
+      ok(`Added NODE_EXTRA_CA_CERTS to ~/.bashrc`);
+      warn('Run `source ~/.bashrc` or restart your terminal');
+    }
+    // Also set for current process so the proxy inherits it
+    process.env.NODE_EXTRA_CA_CERTS = caPath;
+  } catch (e) {
+    fail(`Failed to set NODE_EXTRA_CA_CERTS: ${(e as Error).message}`);
+    warn(`Manually set: NODE_EXTRA_CA_CERTS=${caPath}`);
+    allOk = false;
+  }
+
   printSummary(allOk);
   return allOk;
 }
@@ -218,6 +269,31 @@ export function uninstall(): boolean {
   } catch (e) {
     fail(`Failed to remove cert files: ${(e as Error).message}`);
     allOk = false;
+  }
+
+  // Step 6 — Remove NODE_EXTRA_CA_CERTS
+  step('6. Node CA trust');
+  try {
+    if (process.platform === 'win32') {
+      // setx with empty string removes the var
+      execSync('setx NODE_EXTRA_CA_CERTS ""', { stdio: 'pipe' });
+      ok('Removed NODE_EXTRA_CA_CERTS env var');
+    } else {
+      // Remove the line from shell profiles
+      // fs already imported at top
+      for (const profile of [join(homedir(), '.zshrc'), join(homedir(), '.bashrc')]) {
+        try {
+          const content = readFileSync(profile, 'utf8');
+          if (content.includes('trimr-proxy')) {
+            const cleaned = content.split('\n').filter((l: string) => !l.includes('trimr-proxy')).join('\n');
+            writeFileSync(profile, cleaned);
+            ok(`Removed NODE_EXTRA_CA_CERTS from ${profile}`);
+          }
+        } catch { /* file doesn't exist */ }
+      }
+    }
+  } catch (e) {
+    warn(`Could not remove NODE_EXTRA_CA_CERTS: ${(e as Error).message}`);
   }
 
   console.log('');
