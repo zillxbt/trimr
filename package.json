@@ -1,6 +1,6 @@
 {
   "name": "trimr",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Local proxy that reduces AI API token usage via caching, diffing, dedup, and summarisation",
   "type": "module",
   "bin": {

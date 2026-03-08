@@ -4,6 +4,7 @@
  * Usage: trimr <command>
  */
 import { fileURLToPath } from 'url';
+import { pathToFileURL } from 'url';
 import { dirname, join, resolve } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -12,12 +13,11 @@ const root = resolve(__dirname, '..');
 const command = process.argv[2];
 
 if (command === 'install') {
-  const { install } = await import(join(root, 'dist', 'install', 'installer.js'));
+  const { install } = await import(pathToFileURL(join(root, 'dist', 'install', 'installer.js')).href);
   await install();
 } else if (command === 'uninstall') {
-  const { uninstall } = await import(join(root, 'dist', 'install', 'installer.js'));
+  const { uninstall } = await import(pathToFileURL(join(root, 'dist', 'install', 'installer.js')).href);
   await uninstall();
 } else {
-  // Delegate to the main CLI (status, start, stop, help, etc.)
-  await import(join(root, 'dist', 'cli.js'));
+  await import(pathToFileURL(join(root, 'dist', 'cli.js')).href);
 }
