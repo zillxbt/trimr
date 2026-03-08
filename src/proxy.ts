@@ -1,4 +1,5 @@
 import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
+import { createServer as createHttpsServer } from 'https';
 import { createSecureContext } from 'tls';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -635,11 +636,12 @@ async function start(): Promise<void> {
     // Use the first domain's cert as default, SNI callback picks the right one
     const defaultCert = interceptCerts.values().next().value!;
 
-    // Create a Fastify instance with native HTTPS support and SNI for multi-domain certs
-    const fastifyHttps = Fastify({
-      logger: false,
-      trustProxy: true,
-      https: {
+    // Create a raw Node HTTPS server with SNI support, then pipe it into Fastify
+    // via serverFactory. This ensures TLS is handled at the Node level, not Fastify.
+    let httpsHandler: (req: any, res: any) => void = () => {};
+
+    const httpsServer = createHttpsServer(
+      {
         key: defaultCert.key,
         cert: defaultCert.cert,
         SNICallback: (servername: string, cb: (err: Error | null, ctx?: any) => void) => {
@@ -650,17 +652,29 @@ async function start(): Promise<void> {
               cert: domainCert.cert,
             }));
           } else {
+            // Fall back to default cert
             cb(null, undefined);
           }
         },
       },
+      (req, res) => httpsHandler(req, res),
+    );
+
+    const fastifyHttps = Fastify({
+      logger: false,
+      trustProxy: true,
+      serverFactory: ((handler: any) => {
+        httpsHandler = handler;
+        return httpsServer;
+      }) as any,
     });
 
     // Register routes (including content type parser) on the HTTPS instance
     registerRoutesOn(fastifyHttps);
 
     await fastifyHttps.listen({ port: 443, host: '0.0.0.0' });
-    console.log(`Server listening on 0.0.0.0:443 [intercept mode]`);
+    console.log('TLS server created successfully');
+    console.log(`Server listening on 0.0.0.0:443 [intercept mode, HTTPS]`);
 
     // Also start dashboard HTTP server on port 3000
     startDashboardServer();
