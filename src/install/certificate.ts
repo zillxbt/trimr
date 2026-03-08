@@ -5,7 +5,7 @@
  * for api.anthropic.com and api.openai.com signed by that CA.
  */
 import forge from 'node-forge';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { getTrimrDir } from './paths.js';
@@ -228,6 +228,41 @@ export function removeCertFiles(): void {
   for (const f of files) {
     try { unlinkSync(f); } catch { /* ignore */ }
   }
+}
+
+/** Delete everything in the certs directory to force fresh generation */
+export function clearAllCerts(): void {
+  if (!existsSync(CERT_DIR)) return;
+  for (const file of readdirSync(CERT_DIR)) {
+    try { unlinkSync(join(CERT_DIR, file)); } catch { /* ignore */ }
+  }
+}
+
+/** Verify that a domain certificate was actually signed by the given CA */
+export function verifyCertChain(domain: string, ca: CACert): { valid: boolean; message: string } {
+  const certPath = join(CERT_DIR, `${domain}.pem`);
+  if (!existsSync(certPath)) {
+    return { valid: false, message: `Domain cert file not found: ${certPath}` };
+  }
+  try {
+    const domainCert = forge.pki.certificateFromPem(readFileSync(certPath, 'utf8'));
+    const caStore = forge.pki.createCaStore([ca.cert]);
+    const verified = forge.pki.verifyCertificateChain(caStore, [domainCert]);
+    if (verified) {
+      return { valid: true, message: `${domain} cert verified against CA` };
+    }
+    return { valid: false, message: `${domain} cert failed chain verification` };
+  } catch (e) {
+    return { valid: false, message: `${domain} cert verification error: ${(e as Error).message}` };
+  }
+}
+
+/** Get SHA-256 fingerprint of a certificate */
+export function getCertFingerprint(cert: forge.pki.Certificate): string {
+  const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert));
+  const md = forge.md.sha256.create();
+  md.update(der.getBytes());
+  return md.digest().toHex().replace(/(.{2})/g, '$1:').slice(0, -1).toUpperCase();
 }
 
 export function getCACertPath(): string {

@@ -3,24 +3,21 @@
  * Trimr CLI entry point.
  * Usage: trimr <command>
  */
-import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { existsSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
-const target = join(root, 'src', 'cli.ts');
+const command = process.argv[2];
 
-// Find tsx
-const localTsx = join(root, 'node_modules', '.bin', 'tsx');
-const tsx = existsSync(localTsx) ? localTsx : 'tsx';
-
-const result = spawnSync(
-  process.execPath,
-  ['--import', `${tsx}/esm`, target, ...process.argv.slice(2)],
-  { stdio: 'inherit', env: process.env },
-);
-
-process.exit(result.status ?? 0);
+if (command === 'install') {
+  const { install } = await import(join(root, 'dist', 'install', 'installer.js'));
+  await install();
+} else if (command === 'uninstall') {
+  const { uninstall } = await import(join(root, 'dist', 'install', 'installer.js'));
+  await uninstall();
+} else {
+  // Delegate to the main CLI (status, start, stop, help, etc.)
+  await import(join(root, 'dist', 'cli.js'));
+}

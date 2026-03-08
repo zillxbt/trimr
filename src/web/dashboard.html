@@ -188,7 +188,7 @@
     <span class="logo-sub">proxy</span>
   </div>
   <div class="header-right">
-    <span class="port-badge" id="portBadge">:8787</span>
+    <span class="port-badge" id="portBadge">:8080</span>
     <div class="status-pill" id="statusPill">
       <span class="pulse" id="statusPulse"></span>
       <span id="statusText">connecting</span>
@@ -307,7 +307,7 @@
         </tr>
       </thead>
       <tbody id="sessionsBody">
-        <tr><td colspan="10" class="empty-state">No active sessions.<br>Point your client at <code>http://localhost:8787</code></td></tr>
+        <tr><td colspan="10" class="empty-state">No active sessions.<br>Point your client at <code>http://localhost:8080</code></td></tr>
       </tbody>
     </table>
   </div>
@@ -449,7 +449,7 @@
     // Sessions table
     const tbody = document.getElementById('sessionsBody');
     if (sessions.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="10" class="empty-state">No active sessions.<br>Point your client at <code>http://localhost:8787</code></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="empty-state">No active sessions.<br>Point your client at <code>http://localhost:8080</code></td></tr>`;
     } else {
       tbody.innerHTML = sessions.map(s => {
         const ratio = s.tokensOriginal > 0 ? (s.tokensSaved / s.tokensOriginal * 100) : 0;
@@ -525,7 +525,7 @@
   }
 
   // Detect port from URL
-  const port = location.port || '8787';
+  const port = location.port || '8080';
   document.getElementById('portBadge').textContent = ':' + port;
 
   poll();

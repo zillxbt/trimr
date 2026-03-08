@@ -12,10 +12,10 @@
  */
 import { install, uninstall } from './install/installer.js';
 import { startService, stopService, isRunning } from './install/service.js';
-import { hasHostsEntries } from './install/hosts.js';
+// hosts module no longer needed for CONNECT proxy mode
 import { getAllSessions, getTotalTokensSaved } from './session.js';
 import { getHistory } from './persistence.js';
-import { getCACertPath, getCertDir } from './install/certificate.js';
+import { getCertDir } from './install/certificate.js';
 import { getPidFile, getLogFile } from './install/paths.js';
 import { existsSync, readFileSync } from 'fs';
 import { join as pathJoin } from 'path';
@@ -94,14 +94,16 @@ function showStatus(): void {
     if (running) console.log(`  PID:          ${pid}`);
   } catch { /* no pid file */ }
 
-  // Hosts
-  const hosts = hasHostsEntries();
-  console.log(`  Hosts file:   ${hosts ? green('configured') : yellow('not configured')}`);
+  // Proxy env vars
+  const httpsProxy = process.env.HTTPS_PROXY ?? '';
+  const baseUrl = process.env.ANTHROPIC_BASE_URL ?? '';
+  console.log(`  HTTPS_PROXY:  ${httpsProxy ? green(httpsProxy) : yellow('not set')}`);
+  console.log(`  BASE_URL:     ${baseUrl ? green(baseUrl) : yellow('not set')}`);
 
-  // Certificates
-  const caExists = existsSync(getCACertPath());
-  console.log(`  CA cert:      ${caExists ? green('installed') : yellow('not found')}`);
-  if (caExists) console.log(`  Cert dir:     ${dim(getCertDir())}`);
+  // Certificates (for CONNECT MITM)
+  const certDir = getCertDir();
+  const hasCerts = existsSync(pathJoin(certDir, 'api.anthropic.com.pem'));
+  console.log(`  MITM certs:   ${hasCerts ? green('available') : yellow('not found (CONNECT will tunnel)')}`);
 
   // Stats from persisted history
   try {
@@ -153,13 +155,13 @@ ${bold('Usage:')}
   trimr help        Show this help
 
 ${bold('How it works:')}
-  Trimr intercepts HTTPS calls to api.anthropic.com and api.openai.com
-  by installing a local CA certificate and modifying the hosts file.
+  Trimr runs as a CONNECT tunnel proxy on port 8080.
+  It sets HTTPS_PROXY and ANTHROPIC_BASE_URL env vars so
+  Claude Code, Cursor, and other tools route through it.
   All API calls are compressed (system prompt caching, file diffs,
   dedup, summarisation) before forwarding to the real API.
 
-  No configuration changes needed in Claude Code, Cursor, or Codex.
-
+${dim('  Proxy:      http://localhost:8080')}
 ${dim('  Dashboard:  http://localhost:3000')}
 ${dim('  Data dir:   ~/.trimr/')}
 `);

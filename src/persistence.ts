@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Session } from './session.js';
@@ -95,7 +96,11 @@ export function getHistory(): HistoryFile {
   return history;
 }
 
-export function flushHistory(sessions: Session[]): void {
+let flushInProgress = false;
+
+export async function flushHistory(sessions: Session[]): Promise<void> {
+  if (flushInProgress) return; // skip if a write is already in-flight
+  flushInProgress = true;
   try {
     ensureDir();
     const live = aggregate(sessions);
@@ -122,9 +127,11 @@ export function flushHistory(sessions: Session[]): void {
     const days = [todayRecord, ...otherDays].slice(0, 90); // keep 90 days
 
     const updated: HistoryFile = { lifetime: merged, days };
-    writeFileSync(DATA_FILE, JSON.stringify(updated, null, 2));
+    await writeFile(DATA_FILE, JSON.stringify(updated, null, 2));
     history = updated;
   } catch (e) {
     // Non-fatal — best-effort persistence
+  } finally {
+    flushInProgress = false;
   }
 }

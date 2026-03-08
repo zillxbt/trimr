@@ -1,35 +1,51 @@
 # Trimr
 
-Transparent token-saving proxy for Anthropic and OpenAI APIs. Intercepts HTTPS API calls at the system level -- no configuration changes needed in Claude Code, Cursor, Codex, or any other tool.
+Token-saving proxy for Anthropic and OpenAI APIs. Cuts your API costs by caching, diffing, deduplicating, and summarising requests — transparent to Claude Code, Cursor, Codex, and any other tool.
+
+## Install
+
+```bash
+npm install -g trimr
+trimr install
+```
+
+Then open **http://localhost:3000** to see your savings.
+
+That's it. Claude Code, Cursor, and Codex will automatically route through Trimr.
 
 ## How it works
 
-1. Generates a local CA certificate and installs it in your system trust store
-2. Adds hosts file entries to redirect `api.anthropic.com` and `api.openai.com` to `127.0.0.1`
-3. Runs a local HTTPS server that terminates TLS with domain-specific certificates
-4. Applies the compression pipeline (caching, diffing, dedup, summarisation) to every request
-5. Forwards the compressed request to the real API with the original API key intact
+Trimr runs as a CONNECT tunnel proxy on port 8080. It sets `HTTPS_PROXY` and `ANTHROPIC_BASE_URL` environment variables so your AI tools route through it automatically. Every API call is compressed before forwarding to the real API.
 
-Your tools don't need any configuration changes. They make HTTPS calls to `api.anthropic.com` as usual, but the hosts file redirects them to Trimr first.
-
-## Quick start
-
-```bash
-cd trimr
-npm install
-
-# Install (generates certs, modifies hosts, starts proxy)
-# Requires administrator/sudo for hosts file and cert store
-npx trimr install
-
-# That's it. Claude Code, Cursor, Codex all work automatically.
 ```
+[Claude Code / Cursor / Codex]
+        |
+        | HTTPS via CONNECT proxy (localhost:8080)
+        v
+  [Trimr Proxy :8080]
+        |
+        | Compression pipeline (cache, diff, dedup, summarise)
+        |
+        | HTTPS to real API
+        v
+  [Anthropic / OpenAI API]
+```
+
+## Compression pipeline
+
+| Step | What it does | Savings |
+|---|---|---|
+| **System prompt cache** | Hashes system prompt; on repeat calls adds Anthropic's native `cache_control` breakpoint | ~90% of system prompt on 2nd+ call |
+| **File diffing** | Detects file contents in tool results and fenced code blocks, stores last version, sends only unified diffs | 60-90% on iterative edits |
+| **History compression** | Strips echoed code from old assistant messages | 50-80% on long sessions |
+| **Dedup** | Identical requests within 5 min return cached responses (full-request + last-turn hashing) | 100% on duplicate calls |
+| **Streaming passthrough** | SSE events forwarded byte-for-byte | No overhead |
 
 ## CLI commands
 
 ```
-trimr install     Set up transparent proxy (certs, hosts, autostart)
-trimr uninstall   Cleanly remove all system modifications
+trimr install     Set up proxy (env vars, autostart)
+trimr uninstall   Cleanly remove all modifications
 trimr start       Start the proxy service
 trimr stop        Stop the proxy service
 trimr status      Show proxy status and lifetime stats
@@ -39,85 +55,49 @@ trimr help        Show this help
 ## Uninstall
 
 ```bash
-npx trimr uninstall
+trimr uninstall
 ```
 
-Cleanly reverses all changes:
-- Stops the proxy
-- Removes hosts file entries
-- Removes CA from system trust store
-- Removes autostart
-- Removes certificate files
+Cleanly reverses all changes — stops the proxy, removes env vars, removes autostart.
 
-## Compression pipeline
+## Manual proxy mode
 
-| Step | What it does | Savings |
-|---|---|---|
-| **System prompt cache** | Hashes system prompt; on repeat calls adds Anthropic's native `cache_control` breakpoint | ~90% of system prompt on 2nd+ call |
-| **File diffing** | Detects fenced code blocks, stores last version per file, sends only unified diffs | 60-90% on iterative edits |
-| **History summarisation** | Once history > 8000 tokens, replaces old turns with a Haiku summary | 50-80% on long sessions |
-| **Dedup** | Identical requests within 5 min return cached responses | 100% on duplicate calls |
-| **Streaming passthrough** | SSE events forwarded byte-for-byte | no overhead |
-
-## Proxy mode (non-intercept)
-
-Trimr also works as a standard proxy without system modifications. Set `ANTHROPIC_BASE_URL` or your tool's base URL to `http://localhost:8787`:
+You can also point tools at Trimr manually without running `trimr install`:
 
 ```bash
-# Start in standard proxy mode
-npm run dev
+# Start the proxy
+trimr start
 
 # Point Claude Code at it
-ANTHROPIC_BASE_URL=http://localhost:8787 claude
+ANTHROPIC_BASE_URL=http://localhost:8080 claude
 ```
 
 ## Dashboard
 
-In intercept mode, the dashboard runs at `http://localhost:3000`.
-In proxy mode, the terminal dashboard starts automatically.
+The web dashboard runs at **http://localhost:3000** showing live sessions, token savings, cost reduction, and compression ratios.
 
-Stats are also available as JSON at `/tokendiff/stats`.
+Stats are also available as JSON at `GET /tokendiff/stats`.
 
 ## Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | - | Fallback API key (optional -- tools pass their own) |
-| `PORT` | `8787` | Proxy port (standard mode) |
-| `DASHBOARD_PORT` | `3000` | Dashboard port (intercept mode) |
-| `NODE_ENV` | `development` | Set to `production` for deployments |
-| `TRIMR_MODE` | - | Set to `intercept` for transparent HTTPS interception |
+| `ANTHROPIC_API_KEY` | — | Fallback API key (optional — tools pass their own) |
+| `PORT` | `8080` | Proxy port |
+| `DASHBOARD_PORT` | `3000` | Web dashboard port |
 | `TOKENDIFF_DASHBOARD` | `true` | Set `false` to disable terminal UI |
 
 ## Data directory
 
-All Trimr data is stored in `~/.trimr/`:
-
 ```
 ~/.trimr/
-  certs/           # CA and domain certificates
+  certs/           # Domain certificates (for MITM mode)
   trimr.pid        # PID of running proxy
   trimr.log        # Proxy log output
+~/.tokendiff/
+  history.json     # Lifetime statistics
 ```
 
-Historical stats are stored in `~/.tokendiff/history.json`.
+## License
 
-## Deploy to Railway
-
-Trimr also works as a hosted proxy on Railway. See `railway.toml` for config. In hosted mode, users pass their own API keys via `Authorization: Bearer <key>`.
-
-## Architecture
-
-```
-[Claude Code / Cursor / Codex]
-        |
-        | HTTPS to api.anthropic.com (resolves to 127.0.0.1 via hosts file)
-        v
-  [Trimr HTTPS Server :443]
-        |
-        | Compression pipeline (cache, diff, dedup, summarise)
-        |
-        | HTTPS to real api.anthropic.com (resolved IP)
-        v
-  [Anthropic / OpenAI API]
-```
+MIT

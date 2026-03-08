@@ -31,6 +31,24 @@ export interface Session {
 
 const sessions = new Map<string, Session>();
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const MAX_SNAPSHOTS = 500;
+
+/** Set a file snapshot with LRU eviction when the map exceeds MAX_SNAPSHOTS. */
+export function setFileSnapshot(session: Session, filePath: string, snapshot: FileSnapshot): void {
+  session.fileSnapshots.set(filePath, snapshot);
+  if (session.fileSnapshots.size > MAX_SNAPSHOTS) {
+    // Evict the oldest entry by timestamp
+    let oldestKey: string | null = null;
+    let oldestTs = Infinity;
+    for (const [key, snap] of session.fileSnapshots) {
+      if (snap.timestamp < oldestTs) {
+        oldestTs = snap.timestamp;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) session.fileSnapshots.delete(oldestKey);
+  }
+}
 
 /** Hash an API key to use as session identifier */
 export function hashApiKey(apiKey: string): string {

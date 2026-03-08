@@ -1,18 +1,40 @@
 {
-  "name": "tokendiff",
+  "name": "trimr",
   "version": "1.0.0",
-  "description": "Local proxy that reduces Anthropic API token usage via caching, diffing, and summarisation",
+  "description": "Local proxy that reduces AI API token usage via caching, diffing, dedup, and summarisation",
   "type": "module",
   "bin": {
     "tokendiff": "./bin/tokendiff.mjs",
     "trimr": "./bin/trimr.mjs"
   },
+  "files": [
+    "bin/",
+    "dist/",
+    "src/web/"
+  ],
   "scripts": {
     "dev": "tsx src/proxy.ts",
     "dev:nodash": "cross-env TOKENDIFF_DASHBOARD=false tsx src/proxy.ts",
     "test": "node --import tsx --test test/dedup.test.ts test/differ.test.ts test/cache.test.ts test/session.test.ts test/savings.test.ts",
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "start": "node dist/proxy.js"
+  },
+  "keywords": [
+    "anthropic",
+    "claude",
+    "token",
+    "proxy",
+    "cache",
+    "diff",
+    "cost",
+    "optimization",
+    "api"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zillxbt/trimr.git"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -23,8 +45,7 @@
     "chalk": "^5.3.0",
     "diff": "^7.0.0",
     "fastify": "^4.28.0",
-    "node-forge": "^1.3.3",
-    "tsx": "^4.19.0"
+    "node-forge": "^1.3.3"
   },
   "devDependencies": {
     "@types/blessed": "^0.1.25",
@@ -32,6 +53,7 @@
     "@types/node": "^22.0.0",
     "@types/node-forge": "^1.3.14",
     "cross-env": "^10.1.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }
 }
