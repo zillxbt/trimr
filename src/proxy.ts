@@ -1,6 +1,4 @@
 import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
-import { createServer as createHttpsServer } from 'https';
-import { createServer as createHttpServer } from 'http';
 import { createSecureContext } from 'tls';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -637,39 +635,7 @@ async function start(): Promise<void> {
     // Use the first domain's cert as default, SNI callback picks the right one
     const defaultCert = interceptCerts.values().next().value!;
 
-    const httpsServer = createHttpsServer(
-      {
-        key: defaultCert.key,
-        cert: defaultCert.cert,
-        SNICallback: (servername, cb) => {
-          const domainCert = interceptCerts.get(servername);
-          if (domainCert) {
-            const ctx = createSecureContext({
-              key: domainCert.key,
-              cert: domainCert.cert,
-            });
-            cb(null, ctx);
-          } else {
-            cb(null, undefined);
-          }
-        },
-      },
-    );
-
-    // Route the HTTPS server through Fastify
-    await fastify.listen({ port: 443, host: '0.0.0.0' }, (err) => {
-      if (err) {
-        // Port 443 may need elevation
-        console.error(`Cannot bind to port 443: ${err.message}`);
-        console.error('Run with administrator/sudo privileges, or use: trimr install');
-        process.exit(1);
-      }
-    });
-
-    // Wrap: Fastify uses its own server, but we need HTTPS. Use serverFactory.
-    // Actually, Fastify supports https natively. Let's restart with https opts.
-    await fastify.close();
-
+    // Create a Fastify instance with native HTTPS support and SNI for multi-domain certs
     const fastifyHttps = Fastify({
       logger: false,
       trustProxy: true,
