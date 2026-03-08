@@ -5,7 +5,7 @@
  * dependencies (node-windows/node-mac/systemd). The installer can optionally
  * set up OS-level autostart.
  */
-import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync, openSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, appendFileSync, openSync, mkdirSync, statSync, renameSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
@@ -51,9 +51,27 @@ function cleanPid(): void {
   try { unlinkSync(getPidFile()); } catch { /* ignore */ }
 }
 
+const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10 MB
+
+/** Rotate log file if it exceeds MAX_LOG_SIZE. Keeps one backup. */
+function rotateLog(): void {
+  const logFile = getLogFile();
+  try {
+    if (!existsSync(logFile)) return;
+    const stats = statSync(logFile);
+    if (stats.size > MAX_LOG_SIZE) {
+      const backup = logFile + '.1';
+      try { unlinkSync(backup); } catch { /* no old backup */ }
+      renameSync(logFile, backup);
+    }
+  } catch { /* non-fatal */ }
+}
+
 /** Start the proxy as a background process.
  *  Pass extra env vars to configure mode (e.g. TRIMR_MODE, PORT). */
 export function startService(extraEnv?: Record<string, string>): { success: boolean; message: string; pid?: number } {
+  rotateLog();
+
   if (isRunning()) {
     const pid = readPid()!;
     return { success: true, message: `Trimr already running (PID ${pid})`, pid };

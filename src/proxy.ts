@@ -73,23 +73,34 @@ import { promisify } from 'util';
 const dnsResolveAsync = promisify(dnsResolve);
 
 const realIPs: Record<string, string> = {};
+let lastDnsResolve = 0;
+const DNS_TTL_MS = 5 * 60 * 1000; // Re-resolve every 5 minutes
 
 async function resolveUpstreamIPs(): Promise<void> {
   if (!INTERCEPT_MODE) return;
 
-  // Before hosts are modified, or use a known fallback
-  // These are well-known Anthropic/OpenAI IPs but we should resolve them
-  // before the hosts file is modified. In practice the installer resolves
-  // them before modifying hosts. We store them and use IP-based URLs.
   for (const domain of ['api.anthropic.com', 'api.openai.com']) {
     try {
       const ips = await dnsResolveAsync(domain);
-      if (ips.length > 0) realIPs[domain] = ips[0];
+      if (ips.length > 0) {
+        if (realIPs[domain] !== ips[0]) {
+          log(`[dns] ${domain} → ${ips[0]}${realIPs[domain] ? ` (was ${realIPs[domain]})` : ''}`);
+        }
+        realIPs[domain] = ips[0];
+      }
     } catch {
-      // If DNS fails (hosts already modified), we'll use the domain with
-      // a custom fetch agent that bypasses the hosts file.
-      log(`[intercept] Could not resolve ${domain} — will use direct connection`);
+      if (!realIPs[domain]) {
+        log(`[dns] Could not resolve ${domain} — will use direct connection`);
+      }
     }
+  }
+  lastDnsResolve = Date.now();
+}
+
+/** Re-resolve if TTL has expired. Called per-request, non-blocking. */
+function refreshDnsIfStale(): void {
+  if (INTERCEPT_MODE && Date.now() - lastDnsResolve > DNS_TTL_MS) {
+    resolveUpstreamIPs().catch(() => {});
   }
 }
 
@@ -337,6 +348,8 @@ async function runPipeline(
 // ── Anthropic /v1/messages proxy ──────────────────────────────────────────────
 
 fastify.post('/v1/messages', async (req, reply) => {
+  refreshDnsIfStale();
+
   const apiKey = resolveApiKey(req);
   if (!apiKey) {
     return reply.status(401).send({
@@ -352,13 +365,23 @@ fastify.post('/v1/messages', async (req, reply) => {
 
   const sessionId = resolveSessionId(req, apiKey);
   let body = req.body as AnthropicRequest;
+  const originalBody = body;
 
-  const result = await runPipeline(body, apiKey, sessionId, disabled);
-  body = result.body;
-  const { session, originalReq } = result;
+  let result: Awaited<ReturnType<typeof runPipeline>> | null = null;
+  try {
+    result = await runPipeline(body, apiKey, sessionId, disabled);
+    body = result.body;
+  } catch (e) {
+    // Pipeline failed — passthrough the original request unmodified
+    log(`[pipeline] PASSTHROUGH due to error: ${(e as Error).message}`);
+    body = originalBody;
+  }
 
-  // Dedup hits
-  if (result.dedupStreamHit) {
+  const session = result?.session ?? null;
+  const originalReq = result?.originalReq ?? originalBody;
+
+  // Dedup hits (only if pipeline ran successfully)
+  if (result?.dedupStreamHit) {
     reply.raw.statusCode = 200;
     reply.raw.setHeader('content-type', 'text/event-stream');
     reply.raw.setHeader('cache-control', 'no-cache');
@@ -367,7 +390,7 @@ fastify.post('/v1/messages', async (req, reply) => {
     reply.raw.end();
     return reply;
   }
-  if (result.dedupJsonHit) {
+  if (result?.dedupJsonHit) {
     return reply.header('x-trimr-cache', 'hit').send(result.dedupJsonHit);
   }
 
@@ -445,7 +468,7 @@ fastify.post('/v1/messages', async (req, reply) => {
       usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number };
     };
 
-    if (data.usage) {
+    if (data.usage && session) {
       session.stats.realInputTokens += data.usage.input_tokens ?? 0;
       session.stats.outputTokens += data.usage.output_tokens ?? 0;
       session.stats.cacheReadTokens += data.usage.cache_read_input_tokens ?? 0;
@@ -715,6 +738,8 @@ function registerRoutesOn(app: ReturnType<typeof Fastify>): void {
 
   // Anthropic messages
   app.post('/v1/messages', async (req: FastifyRequest, reply: FastifyReply) => {
+    refreshDnsIfStale();
+
     const apiKey = resolveApiKey(req);
     if (!apiKey) {
       return reply.status(401).send({
@@ -729,11 +754,20 @@ function registerRoutesOn(app: ReturnType<typeof Fastify>): void {
     );
     const sessionId = resolveSessionId(req, apiKey);
     let body = req.body as AnthropicRequest;
-    const result = await runPipeline(body, apiKey, sessionId, disabled);
-    body = result.body;
-    const { session, originalReq } = result;
+    const originalBody = body;
 
-    if (result.dedupStreamHit) {
+    let result: Awaited<ReturnType<typeof runPipeline>> | null = null;
+    try {
+      result = await runPipeline(body, apiKey, sessionId, disabled);
+      body = result.body;
+    } catch (e) {
+      log(`[pipeline] PASSTHROUGH due to error: ${(e as Error).message}`);
+      body = originalBody;
+    }
+    const session = result?.session ?? null;
+    const originalReq = result?.originalReq ?? originalBody;
+
+    if (result?.dedupStreamHit) {
       reply.raw.statusCode = 200;
       reply.raw.setHeader('content-type', 'text/event-stream');
       reply.raw.setHeader('x-trimr-cache', 'hit');
@@ -741,7 +775,7 @@ function registerRoutesOn(app: ReturnType<typeof Fastify>): void {
       reply.raw.end();
       return reply;
     }
-    if (result.dedupJsonHit) {
+    if (result?.dedupJsonHit) {
       return reply.header('x-trimr-cache', 'hit').send(result.dedupJsonHit);
     }
 
@@ -798,7 +832,7 @@ function registerRoutesOn(app: ReturnType<typeof Fastify>): void {
     }
 
     const data = await res.json() as any;
-    if (data.usage) {
+    if (data.usage && session) {
       session.stats.realInputTokens += data.usage.input_tokens ?? 0;
       session.stats.outputTokens += data.usage.output_tokens ?? 0;
       session.stats.cacheReadTokens += data.usage.cache_read_input_tokens ?? 0;
@@ -810,6 +844,7 @@ function registerRoutesOn(app: ReturnType<typeof Fastify>): void {
 
   // OpenAI chat completions
   app.post('/v1/chat/completions', async (req: FastifyRequest, reply: FastifyReply) => {
+    refreshDnsIfStale();
     const apiKey = resolveApiKey(req);
     if (!apiKey) {
       return reply.status(401).send({ error: { message: 'No API key', type: 'authentication_error' } });

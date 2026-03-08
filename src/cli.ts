@@ -119,6 +119,11 @@ function showStatus(): void {
           const pct = ((lt.tokensSaved / lt.tokensOriginal) * 100).toFixed(1);
           console.log(`  Compression:  ${green(pct + '%')}`);
         }
+        // Dollar savings estimate (using Sonnet pricing as default: $3/M input)
+        if (lt.tokensSaved > 0) {
+          const dollarsSaved = (lt.tokensSaved / 1_000_000) * 3.0;
+          console.log(`  Est. saved:   ${green('$' + dollarsSaved.toFixed(2))} ${dim('(at Sonnet $3/M input)')}`);
+        }
         console.log(`  Cache hits:   ${lt.cacheHits ?? 0}`);
         console.log(`  Diffs sent:   ${lt.diffsSent ?? 0}`);
         console.log(`  Dedup hits:   ${lt.dedupHits ?? 0}`);
